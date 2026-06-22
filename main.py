@@ -1,4 +1,4 @@
-import json, socket, threading, time, logging, sys, requests
+import json, socket, threading, time, logging, sys, requests, random
 from teexez.ReQAPI import FreeFireAPI, protobuf_dec, ProtoBuf
 from teexez.GPackGEN import GPackGEN
 
@@ -51,6 +51,31 @@ def send_likes(uid):
         "[AAAAAA]T\u1ed1c \u0111\u1ed9: {}"
     ).format(nick, level, region, added, before, after, speed)
 
+def extract_uid_fields(parsed):
+    uids, seen = [], set()
+    def add(v):
+        if isinstance(v, str) and v.isdigit(): v = int(v)
+        if isinstance(v, int) and v not in seen:
+            seen.add(v); uids.append(v)
+    if "1" in parsed: add(parsed["1"])
+    f5 = parsed.get("5")
+    if isinstance(f5, dict):
+        if "1" in f5: add(f5["1"])
+        for item in f5.get("6", []):
+            if isinstance(item, dict) and "1" in item: add(item["1"])
+    return uids
+
+def ChooseEmote(token, url):
+    url = "{}/ChooseEmote".format(url.rstrip("/"))
+    headers = {
+        "ReleaseVersion": "OB53", "X-GA": "v1 1",
+        "Authorization": "Bearer {}".format(token)}
+    data = "5D 16 45 26 18 C5 DE 3E E8 F4 C5 36 03 7F 84 B7"
+    try:
+        requests.post(url, data=bytes.fromhex(data), headers=headers, timeout=10)
+    except:
+        pass
+
 class datamsg:
     def __init__(self, data):
         self.valid = False
@@ -84,6 +109,15 @@ class Bot:
         self._gen = None
         self.insquad = None
         self.joining_team = False
+        self.ids = []
+        self.Emotes = {
+            'E1': 909050020, 'E2': 909050009, 'G18': 909038012, 'CGK': 909042008,
+            'AK47': 909000063, 'MP40': 909000075, 'MP40V2': 909040010,
+            'FAMAS': 909000090, 'PRF': 909045001, 'M1014V2': 909039011,
+            'P90': 909049010, 'UMP': 909000098, 'GROZA': 909041005, "E3": 909051002,
+            'MP5': 909033002, 'XM8': 909000085, 'M4A1': 909033001, "M60": 909051003,
+            'M1887': 909035007, 'LEVEL100': 909042007, 'M1014': 909000081
+        }
 
     def cleanup(self):
         self.running.clear()
@@ -115,6 +149,8 @@ class Bot:
                 self.guild_id = gd.get("id") if gd else None
                 self.guild_code = gd.get("secret_code") if gd else None
                 log.info("Authenticated: %s | %s", self.botid, self.nickname)
+                if data.get("UserAuthToken") and data.get("BaseUrl"):
+                    threading.Thread(target=ChooseEmote, args=(data["UserAuthToken"], data["BaseUrl"]), daemon=True).start()
 
                 t1 = threading.Thread(target=self._conn_chat, daemon=True)
                 t2 = threading.Thread(target=self._conn_online, daemon=True)
@@ -213,7 +249,9 @@ class Bot:
                     "[FFFFFF][00FFFF]/5 [FFA500]<uid>[FFFFFF] \u279c M\u1edf team 5 ng\u01b0\u1eddi\n"
                     "[FFFFFF][00FFFF]/6 [FFA500]<uid>[FFFFFF] \u279c M\u1edf team 6 ng\u01b0\u1eddi\n"
                     "[FFFFFF][00FFFF]/js [FFA500]<teamcode>[FFFFFF] \u279c V\xe0o team b\u1eb1ng code\n"
-                    "[FFFFFF][00FFFF]/cut [FFFFFF]\u279c Tho\xe1t team\n\n"
+                    "[FFFFFF][00FFFF]/cut [FFFFFF]\u279c Tho\xe1t team\n"
+                    "[FFFFFF][00FFFF]/all s7 [FFFFFF]\u279c B\u1eadt h\xe0nh \u0111\u1ed9ng all\n"
+                    "[FFFFFF][00FFFF]/all rd s7 [FFFFFF]\u279c Random h\xe0nh \u0111\u1ed9ng all\n\n"
                     "[AAAAAA]--- TeeXez ---"
                 )
                 return
@@ -253,6 +291,22 @@ class Bot:
                     self._reply(msg.cid, msg.tp, "[B][c][00FF00]\u0110\xe3 v\xe0o team %s!" % parts[1])
                 except Exception as e:
                     self._reply(msg.cid, msg.tp, "[B][c][FF0000]L%E1%BB%97i: %s" % str(e)[:50])
+                return
+            if text.startswith("/all"):
+                parts = text.split()
+                if len(parts) < 2:
+                    self._reply(msg.cid, msg.tp, "[B][c]Dùng: /all s7 hoặc /all rd s7")
+                    return
+                if not self.ids:
+                    self._reply(msg.cid, msg.tp, "[B][c]Vui lòng dùng /js trước")
+                    return
+                cc = parts[1].upper()
+                if cc == "RD" and len(parts) >= 3 and parts[2].lower() == "s7":
+                    threading.Thread(target=self._all_rd_s7, args=(msg.cid, msg.tp), daemon=True).start()
+                elif cc == "S7":
+                    threading.Thread(target=self._all_s7, args=(msg.cid, msg.tp), daemon=True).start()
+                else:
+                    self._reply(msg.cid, msg.tp, "[B][c]Dùng: /all s7 hoặc /all rd s7")
                 return
             if text in ("/cut", "/leave"):
                 try:
@@ -299,32 +353,74 @@ class Bot:
         except Exception as e:
             log.warning("Squad error: %s", e)
 
-    def _process_0500_packet(self, data):
-        if self.insquad is not None or self.joining_team or not self._gen:
+    def _all_s7(self, cid, tp):
+        if not self.sock_online or not self._gen or not self.ids:
+            self._reply(cid, tp, "[B][c][FF0000]L%E1%BB%97i: ch\u01b0a c\xf3 UID ho\u1eb7c m\u1ea5t k\u1ebft n\u1ed1i")
             return
+        self._reply(cid, tp, "[B][c][FFFF00]\u0110ang b\u1eadt h\xe0nh \u0111\u1ed9ng all s7...")
+        emotes = list(self.Emotes.values())
+        for emote in emotes:
+            if not self.running.is_set(): return
+            self.sock_online.sendall(self._gen.play_emote(emote, self.ids))
+            time.sleep(6.8)
+        self._reply(cid, tp, "[B][c][00FF00]Ho\xe0n t\u1ea5t all s7!")
+        log.info("/all s7 done")
+
+    def _all_rd_s7(self, cid, tp):
+        if not self.sock_online or not self._gen or not self.ids:
+            self._reply(cid, tp, "[B][c][FF0000]L%E1%BB%97i: ch\u01b0a c\xf3 UID ho\u1eb7c m\u1ea5t k\u1ebft n\u1ed1i")
+            return
+        self._reply(cid, tp, "[B][c][FFFF00]\u0110ang b\u1eadt random s7...")
+        emotes = list(self.Emotes.values())
+        random.shuffle(emotes)
+        total_ids = len(self.ids)
+        idx = 0
+        while idx < len(emotes):
+            if not self.running.is_set(): return
+            batch = emotes[idx:idx + total_ids]
+            for i, uid in enumerate(self.ids):
+                if i < len(batch):
+                    self.sock_online.sendall(self._gen.play_emote(batch[i], [uid]))
+            idx += total_ids
+            time.sleep(6.8)
+        self._reply(cid, tp, "[B][c][00FF00]Ho\xe0n t\u1ea5t random s7!")
+        log.info("/all rd s7 done")
+
+    def _process_0500_packet(self, data):
         try:
             raw = bytes.fromhex(data.hex()[10:])
             parsed = ProtoBuf(raw).protobuf()
-            invite = parsed.get("5")
-            if not isinstance(invite, dict):
-                return
-            squad_owner = invite.get("1")
-            code = invite.get("8")
-            if not squad_owner or not code:
-                return
-            squad_owner = int(squad_owner)
-            code = str(code)
-            self.joining_team = True
-            self.sock_online.sendall(self._gen.request_join_squad(squad_owner))
-            time.sleep(0.3)
-            self.sock_online.sendall(self._gen.join_squad_recruit(squad_owner, code))
-            time.sleep(1.5)
-            self.insquad = True
-            log.info("Auto-accepted invite from %s", squad_owner)
         except:
-            pass
-        finally:
-            self.joining_team = False
+            return
+
+        # Auto-accept invite
+        if self.insquad is None and not self.joining_team and self._gen:
+            invite = parsed.get("5")
+            if isinstance(invite, dict):
+                squad_owner = invite.get("1")
+                code = invite.get("8")
+                if squad_owner and code:
+                    try:
+                        self.joining_team = True
+                        self.sock_online.sendall(self._gen.request_join_squad(int(squad_owner)))
+                        time.sleep(0.3)
+                        self.sock_online.sendall(self._gen.join_squad_recruit(int(squad_owner), str(code)))
+                        time.sleep(1.5)
+                        self.insquad = True
+                        log.info("Auto-accepted invite from %s", squad_owner)
+                    except:
+                        pass
+                    finally:
+                        self.joining_team = False
+
+        # Collect UIDs khi đang trong squad
+        if self.insquad is not None:
+            f4 = parsed.get("4")
+            if isinstance(f4, (int, str)) and int(f4) in (3, 6, 8, 44, 56):
+                new = extract_uid_fields(parsed)
+                if new:
+                    self.ids.extend(new)
+                    log.info("Collected UIDs: %s", new)
 
 def main():
     uid, token = read_config()

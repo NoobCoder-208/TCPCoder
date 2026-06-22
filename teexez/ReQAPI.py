@@ -263,6 +263,7 @@ def bdversion(ver: str = None):
 class APIClient:
  def __init__(self):
   self._data = account_data()
+  self.logindata = {}
   detail_vers = bdversion()
   self.is_emulator = False
   self.language = "vn"
