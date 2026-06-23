@@ -429,6 +429,8 @@ class Bot:
                         uid_int = int(squad_owner)
                         if uid_int not in self.ids:
                             self.ids.append(uid_int)
+                        if self.sock_chat:
+                            self.sock_chat.sendall(self._gen.join_channel(uid_int, str(code), None))
                         log.info("Auto-accepted invite from %s | ids: %s", squad_owner, self.ids)
                     except:
                         pass
@@ -446,6 +448,11 @@ class Bot:
                         for uid in new:
                             if uid not in self.ids:
                                 self.ids.append(uid)
+                        if int(f4) == 6 and self.sock_chat:
+                            rc = parsed.get("5", {}).get("17")
+                            if rc:
+                                for uid in new:
+                                    self.sock_chat.sendall(self._gen.join_channel(uid, str(rc), None))
                         log.info("Collected UIDs: %s", new)
 
 def main():
